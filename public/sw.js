@@ -1,17 +1,27 @@
-const CACHE_NAME = 'komik-ai-v2';
+const CACHE_NAME = 'komik-ai-v3';
 const urlsToCache = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/logo.png',
   '/logo.jpg',
-  '/icon-192.jpg',
-  '/icon-512.jpg'
+  '/icon-192.png',
+  '/icon-512.png',
+  '/apple-touch-icon.png',
+  '/favicon.ico'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(urlsToCache);
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // Add each URL individually so if one fails it doesn't break the entire SW installation
+      for (const url of urlsToCache) {
+        try {
+          await cache.add(url);
+        } catch (e) {
+          console.warn('Failed to cache resource during SW install:', url, e);
+        }
+      }
     })
   );
   self.skipWaiting();

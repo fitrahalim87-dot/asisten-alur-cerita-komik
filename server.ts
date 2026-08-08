@@ -35,9 +35,145 @@ function formatGeminiError(err: any): string {
     msg.includes("quota") ||
     msg.includes("rate limit")
   ) {
-    return "Kuota API Gemini / Imagen telah melampaui batas (Quota Exceeded / Rate Limit). Silakan masukkan Kunci API Gemini Anda sendiri di menu Pengaturan (ikon roda gigi) atau tunggu beberapa saat sebelum mencoba lagi.";
+    return "Kuota API telah melampaui batas (Quota Exceeded / Rate Limit). Silakan atur atau ganti Kunci API Anda di menu Pengaturan (ikon roda gigi) atau tunggu beberapa saat sebelum mencoba lagi.";
   }
   return msg;
+}
+
+function getApiKeyAndProvider(req: express.Request) {
+  const apiKey = (
+    req.body.key ||
+    req.body.apiKey ||
+    req.headers["x-gemini-api-key"] as string ||
+    req.headers["x-api-key"] as string ||
+    ""
+  ).trim();
+
+  const provider = (
+    req.body.provider ||
+    req.headers["x-ai-provider"] as string ||
+    "gemini"
+  ).toLowerCase();
+
+  let customEndpoint = (
+    req.body.customEndpoint ||
+    req.headers["x-custom-endpoint"] as string ||
+    ""
+  ).trim();
+
+  let customModel = (
+    req.body.customModel ||
+    req.headers["x-custom-model"] as string ||
+    ""
+  ).trim();
+
+  if (provider === "kie") {
+    if (!customEndpoint) {
+      customEndpoint = "https://api.kie.ai/v1/chat/completions";
+    }
+    if (!customModel) {
+      customModel = "gpt-4o-mini";
+    }
+  } else if (provider === "openai") {
+    if (!customEndpoint) {
+      customEndpoint = "https://api.openai.com/v1/chat/completions";
+    }
+    if (!customModel) {
+      customModel = "gpt-4o-mini";
+    }
+  }
+
+  if (customEndpoint && !customEndpoint.startsWith("http://") && !customEndpoint.startsWith("https://")) {
+    customEndpoint = "https://" + customEndpoint;
+  }
+
+  return { apiKey, provider, customEndpoint, customModel };
+}
+
+async function callOpenAICompatibleAPI({
+  apiKey,
+  endpoint,
+  model,
+  messages,
+  responseFormatJson = false
+}: {
+  apiKey: string;
+  endpoint: string;
+  model: string;
+  messages: any[];
+  responseFormatJson?: boolean;
+}) {
+  const payload: any = {
+    model,
+    messages,
+    temperature: 0.7,
+  };
+  if (responseFormatJson) {
+    payload.response_format = { type: "json_object" };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey.trim()}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (networkErr: any) {
+    throw new Error(`Gagal terhubung ke server API (${endpoint}): ${networkErr?.message || networkErr}`);
+  }
+
+  const rawText = await res.text();
+  let json: any = null;
+  try {
+    json = JSON.parse(rawText);
+  } catch (e) {
+    if (!res.ok) {
+      throw new Error(`API Error (${res.status}): ${rawText.slice(0, 200)}`);
+    }
+  }
+
+  if (!res.ok) {
+    let errMsg = "";
+    if (json) {
+      if (typeof json.error === "string") {
+        errMsg = json.error;
+      } else if (typeof json.error?.message === "string") {
+        errMsg = json.error.message;
+      } else if (typeof json.message === "string") {
+        errMsg = json.message;
+      } else {
+        errMsg = JSON.stringify(json);
+      }
+    } else {
+      errMsg = rawText.trim() || `HTTP ${res.status}`;
+    }
+
+    const providerName = endpoint.includes("groq") ? "Groq AI" : endpoint.includes("kie") ? "Kie AI" : endpoint.includes("openai") ? "OpenAI" : "Custom AI";
+
+    if (res.status === 405) {
+      throw new Error(`HTTP 405 (Method Not Allowed) dari ${providerName}: Endpoint URL '${endpoint}' tidak mendukung request POST. Silakan periksa atau sesuaikan 'Custom API Endpoint URL' di Pengaturan (misal: https://api.kie.ai/v1/chat/completions atau endpoint OpenAI-compatible provider Anda).`);
+    }
+
+    if (res.status === 404) {
+      throw new Error(`HTTP 404 (Not Found) dari ${providerName}: Endpoint URL '${endpoint}' tidak ditemukan. Mohon periksa kembali URL Endpoint di Pengaturan.`);
+    }
+
+    if (res.status === 401 || errMsg.toLowerCase().includes("invalid api key") || errMsg.toLowerCase().includes("unauthorized") || errMsg.toLowerCase().includes("authentication")) {
+      throw new Error(`API Key ${providerName} tidak valid atau salah format. Mohon periksa kembali API Key Anda di Pengaturan. (Detail: ${errMsg})`);
+    }
+
+    throw new Error(`API Provider ${providerName} Error (${res.status}): ${errMsg}`);
+  }
+
+  if (!json || !json.choices || !json.choices[0]) {
+    throw new Error(`Respon dari provider tidak valid: ${rawText.slice(0, 200)}`);
+  }
+
+  return json.choices?.[0]?.message?.content || "";
 }
 
 export const app = express();
@@ -104,35 +240,55 @@ app.use(express.json({ limit: "50mb" }));
     });
   });
 
-  // POST endpoint to validate and test Gemini API keys
+  // POST endpoint to validate and test API keys across providers
   app.post("/api/test-key", async (req, res) => {
-    const { key } = req.body;
-    const apiKey = (key || req.headers["x-gemini-api-key"] as string || "").trim();
+    const { apiKey, provider, customEndpoint, customModel } = getApiKeyAndProvider(req);
 
     if (!apiKey) {
-      res.status(400).json({ error: "Silakan masukkan Kunci API Gemini terlebih dahulu untuk diuji!" });
+      res.status(400).json({ error: "Silakan masukkan Kunci API terlebih dahulu untuk diuji!" });
       return;
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: 'Katakan "OK" jika terhubung!'
-      });
-
-      if (response && response.text) {
-        res.json({ success: true, text: response.text });
+      if (provider === "groq") {
+        const reply = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint: "https://api.groq.com/openai/v1/chat/completions",
+          model: customModel || "llama-3.3-70b-versatile",
+          messages: [{ role: "user", content: "Katakan OK jika terhubung!" }]
+        });
+        res.json({ success: true, text: `[Groq AI Connected] ${reply}` });
+      } else if (provider === "kie" || provider === "openai" || provider === "custom") {
+        const endpoint = customEndpoint || "https://api.kie.ai/v1/chat/completions";
+        const model = customModel || "gpt-4o-mini";
+        const reply = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint,
+          model,
+          messages: [{ role: "user", content: "Katakan OK jika terhubung!" }]
+        });
+        res.json({ success: true, text: `[${provider === "kie" ? "Kie AI" : provider === "openai" ? "OpenAI" : "Custom AI"} Connected] ${reply}` });
       } else {
-        res.status(500).json({ error: "Kombinasi kunci valid namun tidak mengembalikan respon teks." });
+        // Default Gemini
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
+          }
+        });
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: 'Katakan "OK" jika terhubung!'
+        });
+
+        if (response && response.text) {
+          res.json({ success: true, text: `[Gemini AI Connected] ${response.text}` });
+        } else {
+          res.status(500).json({ error: "Kombinasi kunci valid namun tidak mengembalikan respon teks." });
+        }
       }
     } catch (err: any) {
       console.error("Gagal melakukan pengecekan Kunci API:", err);
@@ -140,13 +296,13 @@ app.use(express.json({ limit: "50mb" }));
     }
   });
 
-  // POST endpoint to generate storyline scripts using Gemini
+  // POST endpoint to generate storyline scripts using Multi-Provider AI
   app.post("/api/generate-script", async (req, res) => {
     const { image, previousContext } = req.body;
-    const apiKey = (req.headers["x-gemini-api-key"] as string || "").trim();
+    const { apiKey, provider, customEndpoint, customModel } = getApiKeyAndProvider(req);
 
     if (!apiKey) {
-      res.status(400).json({ error: "Kunci API Gemini pengguna diperlukan! Silakan masukkan API Key Gemini Anda di menu Pengaturan (ikon roda gigi di kanan atas)." });
+      res.status(400).json({ error: "Kunci API pengguna diperlukan! Silakan masukkan API Key Anda (Gemini, Groq, Kie AI/OpenAI) di menu Pengaturan (ikon roda gigi di kanan atas)." });
       return;
     }
 
@@ -156,26 +312,54 @@ app.use(express.json({ limit: "50mb" }));
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
-
       const prompt = `Analisis gambar panel komik ini. ${previousContext || ""} Lanjutkan cerita dengan mendeskripsikan adegan di gambar ini dalam 1-2 kalimat dengan gaya bahasa naratif yang dramatis dan puitis untuk alur cerita video. Fokus pada aksi, ekspresi, dan suasana.`;
       const { mimeType, data: base64Data } = parseDataUri(image);
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-          { parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: base64Data } }] }
-        ]
-      });
+      if (provider === "groq") {
+        const text = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint: "https://api.groq.com/openai/v1/chat/completions",
+          model: customModel || "llama-3.2-11b-vision-preview",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } }
+              ]
+            }
+          ]
+        });
+        res.json({ text });
+      } else if (provider === "kie" || provider === "openai" || provider === "custom") {
+        const endpoint = customEndpoint || "https://api.kie.ai/v1/chat/completions";
+        const model = customModel || "gpt-4o-mini";
+        const text = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint,
+          model,
+          messages: [{ role: "user", content: prompt }]
+        });
+        res.json({ text });
+      } else {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
+          }
+        });
 
-      res.json({ text: response.text || "" });
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: [
+            { parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: base64Data } }] }
+          ]
+        });
+
+        res.json({ text: response.text || "" });
+      }
     } catch (err: any) {
       console.error("Gagal generate storyline script:", err);
       res.status(500).json({ error: formatGeminiError(err) });
@@ -378,10 +562,10 @@ Setiap objek scene berisi:
   // POST endpoint to generate short video scripts for TikTok/Reels/Shorts
   app.post("/api/generate-video-script", async (req, res) => {
     const { idea, duration, platform, tone } = req.body;
-    const apiKey = (req.headers["x-gemini-api-key"] as string || "").trim();
+    const { apiKey, provider, customEndpoint, customModel } = getApiKeyAndProvider(req);
 
     if (!apiKey) {
-      res.status(400).json({ error: "Kunci API Gemini pengguna diperlukan! Silakan masukkan API Key Gemini Anda di menu Pengaturan (ikon roda gigi di kanan atas)." });
+      res.status(400).json({ error: "Kunci API pengguna diperlukan! Silakan masukkan API Key Anda di menu Pengaturan (ikon roda gigi di kanan atas)." });
       return;
     }
 
@@ -391,15 +575,6 @@ Setiap objek scene berisi:
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
-
       const prompt = `Kamu adalah pembuat konten video pendek viral (${platform || "TikTok/Reels/Shorts"}) spesialis recap komik/anime.
 Buatkan skrip video pendek berdurasi sekitar ${duration || "30 detik"} dengan nada bicara ${tone || "Dramatis & Epik"}.
 Ide / topik utama: "${idea}".
@@ -413,12 +588,41 @@ Format keluaran HARUS dalam markdown Bahasa Indonesia yang rapi dengan struktur:
 3. **CALL TO ACTION (Penutup)**: Ajakan untuk follow / like / komen pendapat mereka.
 4. **TEKS NASKAH UTUH UNTUK VOICEOVER**: Gabungan seluruh kalimat narasi voiceover secara lengkap dari awal hingga akhir agar siap di-copy ke Text to Speech (TTS).`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt
-      });
+      if (provider === "groq") {
+        const script = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint: "https://api.groq.com/openai/v1/chat/completions",
+          model: customModel || "llama-3.3-70b-versatile",
+          messages: [{ role: "user", content: prompt }]
+        });
+        res.json({ script });
+      } else if (provider === "kie" || provider === "openai" || provider === "custom") {
+        const endpoint = customEndpoint || "https://api.kie.ai/v1/chat/completions";
+        const model = customModel || "gpt-4o-mini";
+        const script = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint,
+          model,
+          messages: [{ role: "user", content: prompt }]
+        });
+        res.json({ script });
+      } else {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
+          }
+        });
 
-      res.json({ script: response.text || "" });
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: prompt
+        });
+
+        res.json({ script: response.text || "" });
+      }
     } catch (err: any) {
       console.error("Gagal generate video script:", err);
       res.status(500).json({ error: formatGeminiError(err) });
@@ -428,10 +632,10 @@ Format keluaran HARUS dalam markdown Bahasa Indonesia yang rapi dengan struktur:
   // POST endpoint to generate single panel script with context continuity
   app.post("/api/generate-single-panel-script", async (req, res) => {
     const { image, panelIndex, totalPanels, previousScript, nextScript, allContext, style } = req.body;
-    const apiKey = (req.headers["x-gemini-api-key"] as string || "").trim();
+    const { apiKey, provider, customEndpoint, customModel } = getApiKeyAndProvider(req);
 
     if (!apiKey) {
-      res.status(400).json({ error: "Kunci API Gemini pengguna diperlukan! Silakan masukkan API Key Gemini Anda di menu Pengaturan (ikon roda gigi di kanan atas)." });
+      res.status(400).json({ error: "Kunci API pengguna diperlukan! Silakan masukkan API Key Anda di menu Pengaturan (ikon roda gigi di kanan atas)." });
       return;
     }
 
@@ -441,15 +645,6 @@ Format keluaran HARUS dalam markdown Bahasa Indonesia yang rapi dengan struktur:
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
-
       const { mimeType, data: base64Data } = parseDataUri(image);
 
       const promptText = `Kamu adalah Penulis Alur Cerita Komik & Manga Sinematik Profesional.
@@ -470,14 +665,51 @@ ${allContext ? `- Ringkasan Alur Cerita Sejauh Ini:\n${allContext}` : ""}
 5. SANGAT DILARANG menggunakan kata '[Panel 1]', 'Panel #1', 'Pada gambar ini', 'Di panel ini', atau ulasan meta.
 6. Hasilkan HANYA 1 PARAGRAF TEKS NARASI CERITA MURNI (2-4 kalimat) yang siap dibaca untuk Voiceover / Text-to-Speech (TTS).`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-          { parts: [{ text: promptText }, { inlineData: { mimeType, data: base64Data } }] }
-        ]
-      });
+      if (provider === "groq") {
+        const text = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint: "https://api.groq.com/openai/v1/chat/completions",
+          model: customModel || "llama-3.2-11b-vision-preview",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: promptText },
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } }
+              ]
+            }
+          ]
+        });
+        res.json({ script: text.trim() });
+      } else if (provider === "kie" || provider === "openai" || provider === "custom") {
+        const endpoint = customEndpoint || "https://api.kie.ai/v1/chat/completions";
+        const model = customModel || "gpt-4o-mini";
+        const text = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint,
+          model,
+          messages: [{ role: "user", content: promptText }]
+        });
+        res.json({ script: text.trim() });
+      } else {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
+          }
+        });
 
-      res.json({ script: (response.text || "").trim() });
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: [
+            { parts: [{ text: promptText }, { inlineData: { mimeType, data: base64Data } }] }
+          ]
+        });
+
+        res.json({ script: (response.text || "").trim() });
+      }
     } catch (err: any) {
       console.error("Gagal generate single panel script:", err);
       res.status(500).json({ error: formatGeminiError(err) });
@@ -487,10 +719,10 @@ ${allContext ? `- Ringkasan Alur Cerita Sejauh Ini:\n${allContext}` : ""}
   // POST endpoint to generate manga script from multiple panels
   app.post("/api/generate-manga-script", async (req, res) => {
     const { images, style, wordCount, useHook, useOutro } = req.body;
-    const apiKey = (req.headers["x-gemini-api-key"] as string || "").trim();
+    const { apiKey, provider, customEndpoint, customModel } = getApiKeyAndProvider(req);
 
     if (!apiKey) {
-      res.status(400).json({ error: "Kunci API Gemini pengguna diperlukan! Silakan masukkan API Key Gemini Anda di menu Pengaturan (ikon roda gigi di kanan atas)." });
+      res.status(400).json({ error: "Kunci API pengguna diperlukan! Silakan masukkan API Key Anda di menu Pengaturan (ikon roda gigi di kanan atas)." });
       return;
     }
 
@@ -500,15 +732,6 @@ ${allContext ? `- Ringkasan Alur Cerita Sejauh Ini:\n${allContext}` : ""}
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
-
       const parts: any[] = [];
       images.forEach((img: string) => {
         const { mimeType, data: base64Data } = parseDataUri(img);
@@ -534,51 +757,106 @@ Keluarkan hasil berupa JSON berstruktur:
 }
 Array "scripts" HARUS memiliki panjang tepat ${images.length} elemen yang bersambung alurnya!`;
 
-      const responseSchema = {
-        type: Type.OBJECT,
-        properties: {
-          scripts: {
-            type: Type.ARRAY,
-            description: `List of exactly ${images.length} narrative paragraphs corresponding 1:1 to each input image panel in order.`,
-            items: { type: Type.STRING }
-          }
-        },
-        required: ["scripts"]
-      };
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-          ...parts,
-          { text: promptText }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: responseSchema,
-          temperature: 0.7,
+      if (provider === "groq") {
+        const rawResponse = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint: "https://api.groq.com/openai/v1/chat/completions",
+          model: customModel || "llama-3.2-11b-vision-preview",
+          responseFormatJson: true,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: promptText },
+                ...images.map((img: string) => {
+                  const { mimeType, data: base64Data } = parseDataUri(img);
+                  return { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } };
+                })
+              ]
+            }
+          ]
+        });
+        let scriptsArray: string[] = [];
+        try {
+          const parsed = JSON.parse(rawResponse);
+          if (Array.isArray(parsed.scripts)) scriptsArray = parsed.scripts;
+        } catch {
+          scriptsArray = rawResponse.split("\n\n").filter(Boolean);
         }
-      });
+        res.json({ script: scriptsArray.join("\n\n"), scripts: scriptsArray });
+      } else if (provider === "kie" || provider === "openai" || provider === "custom") {
+        const endpoint = customEndpoint || "https://api.kie.ai/v1/chat/completions";
+        const model = customModel || "gpt-4o-mini";
+        const rawResponse = await callOpenAICompatibleAPI({
+          apiKey,
+          endpoint,
+          model,
+          responseFormatJson: true,
+          messages: [{ role: "user", content: promptText }]
+        });
+        let scriptsArray: string[] = [];
+        try {
+          const parsed = JSON.parse(rawResponse);
+          if (Array.isArray(parsed.scripts)) scriptsArray = parsed.scripts;
+        } catch {
+          scriptsArray = rawResponse.split("\n\n").filter(Boolean);
+        }
+        res.json({ script: scriptsArray.join("\n\n"), scripts: scriptsArray });
+      } else {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
+          }
+        });
 
-      let jsonResult: { scripts?: string[] } = {};
-      try {
-        jsonResult = JSON.parse(response.text || "{}");
-      } catch (e) {
-        console.warn("Gagal parse JSON dari Gemini, fallback to text splitting", e);
+        const responseSchema = {
+          type: Type.OBJECT,
+          properties: {
+            scripts: {
+              type: Type.ARRAY,
+              description: `List of exactly ${images.length} narrative paragraphs corresponding 1:1 to each input image panel in order.`,
+              items: { type: Type.STRING }
+            }
+          },
+          required: ["scripts"]
+        };
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: [
+            ...parts,
+            { text: promptText }
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+            temperature: 0.7,
+          }
+        });
+
+        let jsonResult: { scripts?: string[] } = {};
+        try {
+          jsonResult = JSON.parse(response.text || "{}");
+        } catch (e) {
+          console.warn("Gagal parse JSON dari Gemini, fallback to text splitting", e);
+        }
+
+        let scriptsArray = jsonResult.scripts || [];
+        if (!Array.isArray(scriptsArray) || scriptsArray.length === 0) {
+          const rawText = response.text || "";
+          scriptsArray = rawText.split('\n\n').filter(p => p.trim().length > 0);
+        }
+
+        const fullScriptText = scriptsArray.join('\n\n');
+
+        res.json({ 
+          script: fullScriptText,
+          scripts: scriptsArray 
+        });
       }
-
-      let scriptsArray = jsonResult.scripts || [];
-      if (!Array.isArray(scriptsArray) || scriptsArray.length === 0) {
-        // Fallback if schema output didn't return expected array
-        const rawText = response.text || "";
-        scriptsArray = rawText.split('\n\n').filter(p => p.trim().length > 0);
-      }
-
-      const fullScriptText = scriptsArray.join('\n\n');
-
-      res.json({ 
-        script: fullScriptText,
-        scripts: scriptsArray 
-      });
     } catch (err: any) {
       console.error("Gagal generate manga script:", err);
       res.status(500).json({ error: formatGeminiError(err) });

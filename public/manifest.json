@@ -1,24 +1,43 @@
 {
+  "id": "/",
   "short_name": "Asisten Komik",
   "name": "Asisten Alur Cerita Komik AI",
+  "description": "Platform kreatif bertenaga AI untuk membantu pembuat alur cerita komik & manhwa.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B0F17",
+  "theme_color": "#0B0F17",
   "icons": [
     {
-      "src": "/icon-192.jpg",
-      "type": "image/jpeg",
+      "src": "/icon-192.png",
+      "type": "image/png",
       "sizes": "192x192",
       "purpose": "any maskable"
     },
     {
-      "src": "/icon-512.jpg",
-      "type": "image/jpeg",
+      "src": "/icon-512.png",
+      "type": "image/png",
       "sizes": "512x512",
       "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "type": "image/png",
+      "sizes": "1024x1024",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.jpg",
+      "type": "image/jpeg",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icon-512.jpg",
+      "type": "image/jpeg",
+      "sizes": "512x512"
     }
   ],
-  "start_url": "/",
-  "background_color": "#0B0F17",
-  "theme_color": "#0B0F17",
-  "display": "standalone",
-  "orientation": "portrait",
-  "description": "Platform kreatif bertenaga AI untuk membantu pembuat alur cerita komik & manhwa."
+  "categories": ["entertainment", "productivity", "utilities"]
 }
