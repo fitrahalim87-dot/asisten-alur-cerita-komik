@@ -7,8 +7,7 @@ import { Communicate } from "edge-tts-universal";
 import * as googleTTS from "google-tts-api";
 import { GoogleGenAI, Type } from "@google/genai";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const currentDir = typeof __dirname !== "undefined" ? __dirname : process.cwd();
 
 function parseDataUri(dataUri: string) {
   if (!dataUri) {
@@ -41,11 +40,9 @@ function formatGeminiError(err: any): string {
   return msg;
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+export const app = express();
 
-  app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: "50mb" }));
 
   // POST endpoint for high-quality, natural Text-To-Speech
   app.post("/api/tts", async (req, res) => {
@@ -590,22 +587,25 @@ Array "scripts" HARUS memiliki panjang tepat ${images.length} elemen yang bersam
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+    createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+    }).then((vite) => {
+      app.use(vite.middlewares);
     });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, "dist")));
+  } else if (!process.env.VERCEL) {
+    app.use(express.static(path.join(currentDir, "dist")));
     app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+      res.sendFile(path.join(currentDir, "dist", "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
+  if (!process.env.VERCEL) {
+    const PORT = 3000;
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
 
-startServer();
+export default app;
 
