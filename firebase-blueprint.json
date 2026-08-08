@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing authentication and contact details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID" },
+        "email": { "type": "string", "description": "Google authentication email" },
+        "displayName": { "type": "string", "description": "Name of the user" },
+        "photoURL": { "type": "string", "description": "Avatar image url" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["uid", "email"]
+    },
+    "License": {
+      "title": "License",
+      "description": "A generated or requested license key linked to a user profile",
+      "type": "object",
+      "properties": {
+        "licenseId": { "type": "string", "description": "Auto-generated document ID same as licenseKey" },
+        "licenseKey": { "type": "string", "description": "Formatted license string" },
+        "userId": { "type": "string", "description": "The user ID this belongs to" },
+        "email": { "type": "string", "description": "User email address" },
+        "status": { "type": "string", "enum": ["active", "inactive"], "description": "Activation state of the license" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the license was generated" },
+        "activatedAt": { "type": "string", "format": "date-time", "description": "When the license was verified and activated" }
+      },
+      "required": ["licenseId", "licenseKey", "userId", "email", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Store user document by user ID"
+    },
+    "/licenses/{licenseId}": {
+      "schema": "License",
+      "description": "Store license document by licenseId (which equals the licenseKey)"
+    }
+  }
+}

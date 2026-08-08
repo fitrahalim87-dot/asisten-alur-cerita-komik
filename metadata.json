@@ -1,0 +1,8 @@
+{
+  "name": "Asisten Alur cerita komik",
+  "description": "Platform kreatif bertenaga AI untuk membantu kreator konten, penulis, dan penggemar komik mewujudkan imajinasi mereka.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

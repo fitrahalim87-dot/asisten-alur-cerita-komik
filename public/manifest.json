@@ -1,0 +1,24 @@
+{
+  "short_name": "Asisten Komik",
+  "name": "Asisten Alur Cerita Komik AI",
+  "icons": [
+    {
+      "src": "/icon-192.jpg",
+      "type": "image/jpeg",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.jpg",
+      "type": "image/jpeg",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0B0F17",
+  "theme_color": "#0B0F17",
+  "display": "standalone",
+  "orientation": "portrait",
+  "description": "Platform kreatif bertenaga AI untuk membantu pembuat alur cerita komik & manhwa."
+}
