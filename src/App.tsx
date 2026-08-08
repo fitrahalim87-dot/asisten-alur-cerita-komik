@@ -87,13 +87,7 @@ export default function App() {
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { /* fallback */ }
     }
-    const now = Date.now();
-    return [
-      { key: 'KOMIK-VIP-2026', buyerName: 'VIP Demo', type: 'VIP Lifetime', durationMs: null, createdAt: now, expiresAt: null },
-      { key: 'KOMIK-MON-2026', buyerName: 'Bulanan Demo', type: 'Akses 30 Hari', durationMs: 30 * 24 * 3600 * 1000, createdAt: now, expiresAt: now + 30 * 24 * 3600 * 1000 },
-      { key: 'KOMIK-PRO-2026', buyerName: 'Tahunan Demo', type: 'Akses 1 Tahun', durationMs: 365 * 24 * 3600 * 1000, createdAt: now, expiresAt: now + 365 * 24 * 3600 * 1000 },
-      { key: 'KOMIK-PREVIEW-2026', buyerName: 'Preview Demo 1 Jam', type: 'Akses 1 Jam', durationMs: 3600 * 1000, createdAt: now, expiresAt: now + 3600 * 1000 }
-    ];
+    return [];
   });
 
   const [activeLicense, setActiveLicense] = useState<ActiveAppLicense | null>(() => {
@@ -180,20 +174,8 @@ export default function App() {
       type = found.type;
       durationMs = found.durationMs;
       buyerName = found.buyerName;
-    } else if (cleanKey.startsWith('KOMIK-VIP-') || cleanKey.startsWith('VIP-') || cleanKey.startsWith('FITRAH-')) {
-      type = 'VIP Lifetime';
-      durationMs = null;
-    } else if (cleanKey.startsWith('KOMIK-MON-')) {
-      type = 'Akses 30 Hari';
-      durationMs = 30 * 24 * 3600 * 1000;
-    } else if (cleanKey.startsWith('KOMIK-PRO-')) {
-      type = 'Akses 1 Tahun';
-      durationMs = 365 * 24 * 3600 * 1000;
-    } else if (cleanKey.startsWith('KOMIK-PREVIEW-')) {
-      type = 'Akses 1 Jam';
-      durationMs = 3600 * 1000;
     } else {
-      setLicenseError('Kode Lisensi tidak ditemukan atau belum terdaftar. Silakan hubungi Admin via WhatsApp.');
+      setLicenseError('Kode Lisensi tidak ditemukan atau belum dibuat oleh Admin. Silakan hubungi Admin via WhatsApp.');
       setLicenseSuccess(null);
       return false;
     }
@@ -2608,7 +2590,7 @@ export default function App() {
                       type="text"
                       value={inputLicenseKey}
                       onChange={(e) => setInputLicenseKey(e.target.value)}
-                      placeholder="Contoh: KOMIK-VIP-2026, KOMIK-MON-8912, KOMIK-PRO-1029"
+                      placeholder="Masukkan Kode Lisensi Anda di sini..."
                       className={`w-full p-3 rounded-xl border text-xs font-mono tracking-widest uppercase focus:border-emerald-500 focus:outline-none ${inputClass}`}
                     />
                     <button
